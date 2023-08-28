@@ -1,0 +1,160 @@
+---
+title: "Panoramics Tutorial"
+author: "Selen Bayram"
+date: "2023-06-14"
+output: html_document
+---
+
+#Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(Seurat)
+```
+
+```{r}
+hum_meta <- read.csv("AIBS_human_meta_mini.csv", row.names = 1)
+hum_counts <- read.csv("AIBS_human_counts_mini.csv", row.names = 1)
+
+hum_counts_sparse <- as(as.matrix(hum_counts), "sparseMatrix")
+
+
+row.names(hum_meta) <- hum_meta$sample_name
+
+hum_meta
+```
+
+# Create Seurat object
+```{r}
+
+hum_counts_sparse_transposed = as(as.matrix(t(hum_counts)), "sparseMatrix")
+Seu_hum <- CreateSeuratObject(counts = hum_counts_sparse_transposed, meta.data = hum_meta, assay = "RNA")
+
+#rm(hum_counts, hum_meta)
+```
+
+active identity:
+```{r}
+Idents(Seu_hum)
+Seu_hum@active.ident
+```
+
+# Normalization of data
+Counts per million:
+```{r}
+Seu_hum <- NormalizeData(Seu_hum, normalization.method = "LogNormalize", 
+                         scale.factor = 1000000)
+Seu_hum@assays$RNA@data #access the normalized data
+```
+
+Find variable features (genes)
+```{r}
+Seu_hum <- FindVariableFeatures(Seu_hum, selection.method = "vst", 
+                                nfeatures = 2000)
+
+Seu_hum@assays$RNA@var.features
+```
+
+Scale data:
+```{r}
+Seu_hum <- ScaleData(Seu_hum)
+```
+
+Run PCA:
+```{r}
+Seu_hum <- RunPCA(Seu_hum, npcs = 50)
+ElbowPlot(Seu_hum, ndims = 50)
+```
+
+Find Neighbors:
+```{r}
+Seu_hum <- FindNeighbors(Seu_hum, reduction = "pca", dims = 1:20)
+```
+
+Find Clusters:
+```{r}
+Seu_hum <- FindClusters(Seu_hum, resolution = 0.5)
+```
+
+```{r}
+table(Seu_hum$seurat_clusters)
+table(Seu_hum$seurat_clusters, Seu_hum$subclass_label)
+```
+
+Run UMAP:
+```{r}
+Seu_hum <- RunUMAP(Seu_hum, reduction = "pca", dims = 1:20)
+
+DimPlot(Seu_hum, reduction = "umap", group.by = "seurat_clusters", label = TRUE,
+        repel = TRUE)
+```
+
+```{r}
+DimPlot(Seu_hum, reduction = "umap", group.by = "subclass_label", label = TRUE)
+```
+
+Get marker genes for all clusters:
+```{r}
+all_clusters_markers = FindAllMarkers(Seu_hum, logfc.threshold = log(2), 
+                                      min.pct = 0.5)
+```
+
+
+```{r}
+features = cluster_3_vs_all %>%
+  arrange(p_val_adj) %>%
+  head(n = 6) %>%
+  row.names()
+```
+
+# Violin Plot
+```{r}
+#svg("cluster_3_violin_plot.svg")
+#png("cluster_3_violin_plot.svg", res = 300)
+VlnPlot(Seu_hum, features = features)
+#dev.off()
+```
+
+# Feature Plot
+```{r}
+FeaturePlot(Seu_hum, features = features)
+```
+
+# Dot Plot
+```{r}
+DotPlot(Seu_hum, features = features) + RotatedAxis()
+```
+
+# Heatmap
+```{r}
+# subsetting 100 cells per cluster from the data of 2500 cells
+DoHeatmap(subset(Seu_hum, downsample = 100), features = features, size = 3, 
+          slot = "data") + scale_fill_viridis_c()
+# scale_fill_viridis_c() changes the colour palette from ugly pink to black
+```
+
+# Is there any difference between clusters based on the sex of the cell donors?
+```{r}
+Seu_hum@meta.data <- Seu_hum@meta.data %>%
+  mutate(sex_cluster3 = paste(donor_sex_label, seurat_clusters, sep = "_"))
+
+table(Seu_hum$sex_cluster3)
+```
+
+```{r}
+Idents(Seu_hum) <- "sex_cluster3"
+
+sex_cluster3_markers <- FindMarkers(Seu_hum, ident.1 = "F_3", ident.2 = "M_3",
+                                    logfc.threshold = log(2), min.pct = 0.5)
+```
+
+# genes that are expressed differently between male vs female
+```{r}
+sex_cluster3_markers %>%
+  arrange(p_val_adj)
+# genes that are upregulated in females compared to males are +ve values in the 
+# table since ident.1 == F (if ident.1 and ident.2 switched, values would be -ve)
+```
