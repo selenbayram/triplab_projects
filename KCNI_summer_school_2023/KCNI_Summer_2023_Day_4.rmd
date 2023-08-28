@@ -1,0 +1,158 @@
+---
+title: 'KCNI Summer Academy 2023: Day 3'
+author: "Selen Bayram"
+date: "11/07/2023"
+output: pdf_document
+---
+
+# Case-control differential expression with pseudobulks
+## Setup
+### Set working directory
+```{r setup}
+knitr::opts_knit$set(root.dir = "/Users/selenbayram/triplab/KCNI_Summer_2023/")
+```
+
+# Load packages
+```{r}
+install.packages("edgeR")
+install.packages("cowplot")
+install.packages("ggpubr")
+install.packages("gprofiler2")
+
+install.packages("BiocManager")
+BiocManager::install("edgeR")
+
+install.packages("ggrepel")
+```
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(edgeR)
+library(cowplot)
+library(ggpubr)
+library(gprofiler2)
+library(ggrepel)
+library(dplyr)
+library(limma)
+```
+
+# Load the Seurat object
+```{r}
+seu_10x <- readRDS("/Users/selenbayram/triplab/KCNI_Summer_2023/seu_10x_2.rds")
+
+pseudobulk_seu_10x_object <- Seurat:::PseudobulkExpression(object = seu_10x,
+    group_by = c("external_donor_name_label", "subclass_label"),
+    pb.method = "aggregate", slot = "counts")
+
+pseudobulk_seu_10x_counts <-  pseudobulk_seu_10x_object[["RNA"]] %>% 
+    as.data.frame()
+```
+
+```{r}
+pseudobulk_astro_counts <- read_csv("/Users/selenbayram/triplab/KCNI_Summer_2023/astro_pseudobulk_counts.csv")
+gene_info <- read_csv("/Users/selenbayram/triplab/KCNI_Summer_2023/astro_pseudobulk_gene_info.csv")
+sea_ad_meta <- read_csv("/Users/selenbayram/triplab/KCNI_Summer_2023/astro_pseudobulk_meta_updated.csv")
+
+pseudobulk_astro_counts <- as.data.frame(pseudobulk_astro_counts)
+rownames(pseudobulk_astro_counts) <- gene_info$gene_symbol
+```
+
+```{r}
+sea_ad_meta <- sea_ad_meta %>% 
+    mutate(disease = factor(disease, levels = c("control", "dementia")))
+```
+
+```{r}
+p1 <- sea_ad_meta %>% 
+    filter(`Neurotypical reference` == FALSE) %>%
+    ggplot(aes(x = disease, y = cells_per_donor)) +
+    geom_boxplot() +
+    stat_compare_means() +
+    theme_cowplot() +
+    ylab("astrocyte nuclei per donor (count)")
+
+p2 <- sea_ad_meta %>%
+    filter(`Neurotypical reference` == FALSE) %>%
+    ggplot(aes(x = disease, y = cells_per_donor / total_cells_per_donor * 100), 
+               fill = disease) +
+    geom_boxplot() +
+    theme_cowplot() +
+    ylab("astrocyte nuclei fraction (%, total nuclei)") +
+    stat_compare_means()
+
+p3 <- sea_ad_meta %>%
+    filter(`Neurotypical reference` == FALSE) %>%
+    ggplot(aes(x = disease, y = total_cells_per_donor), 
+               fill = disease) +
+    geom_boxplot() +
+    theme_cowplot() +
+    ylab("astrocyte nuclei fraction (%, total nuclei)") +
+    stat_compare_means()
+
+p1 + p2
+```
+
+```{r}
+sea_ad_meta %>% 
+    filter(`Neurotypical reference` == FALSE) %>%
+    ggplot(aes(x = `Continuous Pseudo-progression Score`,
+               y = cells_per_donor / total_cells_per_donor * 100),
+        color = disease) +
+    geom_point() +
+    theme_cowplot() +
+    theme_cowplot() +
+    ylab("Astrocyte nuclei fraction (%, total nuclei)") +
+    xlab("AD Pathology Score") +
+    geom_smooth(method = "lm", se = FALSE) +
+    stat_cor()
+```
+
+```{r}
+pseudobulk_astro_cpm <- edgeR::cpm(y = pseudobulk_astro_counts)
+rownames(pseudobulk_astro_cpm) <- gene_info$feature_name
+
+pseudobulk_astro_cpm_trans <- pseudobulk_astro_cpm %>% 
+    t() %>%
+    as.data.frame()
+```
+
+```{r}
+pseudobulk_astro_cpm_trans <- pseudobulk_astro_cpm_trans %>% 
+    rownames_to_column(var = "donor_id")
+
+pseudobulk_astro_cpm_trans <- left_join(sea_ad_meta,
+                                        pseudobulk_astro_cpm_trans,
+                                        by = c(`Donor ID` = "donor_id"))
+```
+
+```{r}
+p3 <- pseudobulk_astro_cpm_trans %>%
+    filter(`Neurotypical reference` == FALSE) %>%
+    ggplot(aes(x = disease, y = log2(GFAP + 1), fill = disease)) +
+    geom_boxplot() +
+    theme_cowplot() +
+    ylab("GFAP mRNA expr (log2 CPM + 1)") +
+    stat_compare_means()
+
+p4 <- pseudobulk_astro_cpm_trans %>%
+    filter(`Neurotypical reference` == FALSE) %>%
+    ggplot(aes(x = disease, y = log2(SCN2A + 1), fill = disease)) +
+    geom_boxplot() +
+    theme_cowplot() +
+    ylab("SCN2A mRNA expr (log2 CPM + 1)") +
+    stat_compare_means()
+
+p5 <- pseudobulk_astro_cpm_trans %>%
+    filter(`Neurotypical reference` == FALSE) %>%
+    ggplot(aes(x = disease, y = log2(AQP4 + 1), fill = disease)) +
+    geom_boxplot() +
+    theme_cowplot() +
+    ylab("AQP4 mRNA expr (log2 CPM + 1)") +
+    stat_compare_means()
+
+p3 + p4 + p5
+```
+
+```{r}
+```

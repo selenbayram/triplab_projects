@@ -1,0 +1,142 @@
+---
+title: "KCNI Summer School"
+author: "Selen Bayram"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+---
+
+```{r setup, include = FALSE}
+knitr::opts_knit$set(root.dir = "/Users/selenbayram/triplab/KCNI_Summer_2023/")
+```
+
+```{r}
+#install.packages("tidyverse")
+library(tidyverse)
+#install.packages("Seurat")
+library(Seurat)
+```
+
+```{r}
+meta_smart  <- read.csv("/Users/selenbayram/triplab/KCNI_Summer_2023/AIBS_smart_meta_mini.csv", row.names = 1)
+```
+```{r}
+counts_smart <- read.csv("/Users/selenbayram/triplab/KCNI_Summer_2023/AIBS_smart_counts_mini.csv", row.names = 1)
+```
+```{r}
+meta_smart %>% mutate(subclass_layer_label = paste(subclass_label, cortical_layer_label, sep = " "))
+```
+```{r}
+meta_smart %>% filter(subclass_label == "VIP")
+```
+```{r}
+meta_smart %>% dplyr::select(subclass_label, cortical_layer_label) # use the version of select function within dplyr package
+```
+```{r}
+meta_smart %>% group_by(cortical_layer_label) %>% tally
+```
+
+What region - cortical layer combo is the most common location for our VIP neurons, stratified by donor sex?
+```{r}
+meta_smart %>% 
+    filter(subclass_label == "VIP") %>% 
+    select(region_label, cortical_layer_label, donor_sex_label) %>% 
+    mutate(region_layer_label = paste(region_label, cortical_layer_label, sep = " ")) %>% 
+    group_by(donor_sex_label, region_layer_label) %>% 
+    tally %>% 
+    summarize(region_summary = region_layer_label[which.max(n)])
+```
+```{r}
+meta_smart %>% 
+    filter(subclass_label == "VIP") %>% 
+    pull(sample_name)
+```
+
+SEURAT
+```{r}
+# transpose t() so that the columns are sample names and the rows are genes, which is required for Seurat obj
+seu_smart <- CreateSeuratObject(counts = t(counts_smart), 
+                                meta.data = meta_smart)
+
+# rm(counts_smart, meta_smart)
+```
+
+Preprocessing
+
+~Normalization
+```{r}
+seu_smart <- seu_smart %>% 
+    NormalizeData(normalization.method = "LogNormalize", scale.factor = 1000000)
+
+seu_smart@assays$RNA@data
+```
+
+~Finding Variable Features
+```{r}
+seu_smart <- seu_smart %>% FindVariableFeatures(selection.method = "vst", nfeatures = 2000)
+seu_smart@assays$RNA@var.features
+```
+
+~Scaling Data
+```{r}
+seu_smart <- seu_smart %>% ScaleData(verbose = F) # verbose = F to avoid output to show up
+```
+
+~Principal Component Analysis (PCA) 
+Dimensionality Reduction
+```{r}
+# seu_smart <- seu_smart %>% RunPCA(npcs = 50, verbose = F)
+# ElbowPlot(seu_smart, ndims = 50)
+seu_smart <- seu_smart %>% RunPCA(npcs = 20, verbose = F)
+```
+
+~Find Neighbors
+```{r}
+seu_smart <- seu_smart %>% FindNeighbors(reduction = "pca", dims = 1:20)
+```
+
+~Find CLusters
+```{r}
+seu_smart <- seu_smart %>% FindClusters(resolution = 0.2)
+```
+```{r}
+table(seu_smart$seurat_clusters)
+table(seu_smart$seurat_clusters, seu_smart$class_label)
+table(seu_smart$seurat_clusters, seu_smart$subclass_label)
+```
+
+~UMAP
+```{r}
+seu_smart <- seu_smart %>% RunUMAP(reduction = "pca", dims = 1:20)
+```
+
+PLOTS
+~DimPlot
+```{r}
+p1 <- DimPlot(seu_smart, reduction = "umap", group.by = "seurat_clusters", label = TRUE)
+p2 <- DimPlot(seu_smart, reduction = "pca", group.by = "seurat_clusters", label = TRUE)
+p3 <- DimPlot(seu_smart, reduction = "umap", group.by = "subclass_label", label = TRUE, repel = TRUE)
+p1 + p3
+```
+
+SCTransform
+```{r}
+seu_smart_2 <- CreateSeuratObject(counts = t(counts_smart), meta.data = meta_smart) %>% 
+    SCTransform(variable.features.n = 3000) %>% 
+    RunPCA(npcs = 30) %>% 
+    FindNeighbors(reduction = "pca", dims = 1:30) %>% 
+    RunUMAP(reduction = "pca", dims = 1:30) %>% 
+    FindClusters(resolution = 0.5)
+```
+```{r}
+ElbowPlot(seu_smart_2, ndims = 30)
+```
+```{r}
+p11 <- DimPlot(seu_smart_2, reduction = "umap", group.by = "subclass_label", label = TRUE)
+p12 <- DimPlot(seu_smart_2, reduction = "umap", group.by = "seurat_clusters", label = TRUE)
+p11 + p12
+```
+
+```{r}
+# saveRDS(seu_smart, "seu_smart.rds")
+saveRDS(seu_smart_2, "/Users/selenbayram/triplab/KCNI_Summer_2023/seu_smart_2.rds")
+```

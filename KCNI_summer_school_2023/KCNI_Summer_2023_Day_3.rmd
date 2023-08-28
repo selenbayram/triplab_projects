@@ -1,0 +1,370 @@
+---
+title: 'KCNI Summer Academy 2023: Day 3'
+author: "Selen Bayram"
+date: "11/07/2023"
+output: pdf_document
+---
+
+# Dataset integration & automated cell type annotation
+## Setup
+### Set working directory
+```{r setup}
+knitr::opts_knit$set(root.dir = "/Users/selenbayram/triplab/KCNI_Summer_2023/")
+```
+
+### Load packages
+```{r}
+#install.packages("BiocManager")
+#BiocManager::install("multtest")
+library(multtest)
+#BiocManager::install("limma")
+library(limma)
+#install.packages("metap")
+library(metap)  
+
+library(tidyverse)
+library(Seurat)
+```
+
+```{r}
+# install.packages("httpgd")
+library(httpgd)
+```
+
+```{r}
+# load smart
+meta_smart <- read.csv("/Users/selenbayram/triplab/KCNI_Summer_2023/AIBS_smart_meta_mini.csv", row.names = 1) %>% mutate(method = "smart")
+counts_smart <- read.csv("/Users/selenbayram/triplab/KCNI_Summer_2023/AIBS_smart_counts_mini.csv", row.names = 1)
+```
+
+```{r}
+# load 10x
+meta_10x <- read.csv("/Users/selenbayram/triplab/KCNI_Summer_2023/SEA-AD_10x_meta_mini.csv", row.names = 1) %>% mutate(method = "10x")
+counts_10x <- read.csv("/Users/selenbayram/triplab/KCNI_Summer_2023/SEA-AD_10x_counts_mini.csv", row.names = 1)
+```
+
+Filtering the count matrices
+```{r}
+# finding the list of genes shared between the two datasets
+common_genes <- intersect(colnames(counts_smart), colnames(counts_10x))
+```
+
+```{r}
+# use shared genes to subset count matrices
+# indexing by columns [,common_genes] and by rows [common_genes,]
+# only columns that are kept are the ones that are in common_genes
+
+counts_smart <- counts_smart[,common_genes]
+counts_10x <- counts_10x[,common_genes]
+```
+
+Creating Seurat objects
+```{r}
+seu_smart_intg <- CreateSeuratObject(counts = t(counts_smart), meta.data = meta_smart)
+seu_10x_intg <- CreateSeuratObject(counts = t(counts_10x), meta.data = meta_10x)
+dim(counts_10x)
+dim(counts_smart)
+```
+
+```{r}
+# remove the large dataframes from the environment
+rm(counts_smart, counts_10x, meta_10x, meta_smart)
+```
+
+Preprocessing for Integration 
+```{r}
+seu_list <- c(seu_smart_intg, seu_10x_intg)
+# rm(seu_smart_intg, seu_10x_intg)
+```
+
+```{r}
+# apply the function() to each seurat object in seu_list
+# SCTransform() is a function from Seurat that performs normalization and scaling
+seu_list <- lapply(X = seu_list, FUN = function(x) {
+  x <- SCTransform(x, variable.features.n = 3000, conserve.memory = TRUE)
+})
+```
+
+```{r}
+# select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = seu_list, nfeatures = 3000)
+seu_list <- PrepSCTIntegration(object.list = seu_list, anchor.features = features)
+```
+
+```{r}
+# controlling for the differences between within-dataset variabilities
+anchors <- FindIntegrationAnchors(object.list = seu_list, normalization.method = "SCT", anchor.features = features)
+```
+
+```{r}
+# integrate the datasets
+seu_intg <- IntegrateData(anchorset = anchors, normalization.method = "SCT")
+```
+
+```{r}
+rm(seu_list, anchors, features, common_genes)
+```
+
+Initial Analysis
+```{r}
+DefaultAssay(seu_intg) <- "integrated"
+```
+
+```{r}
+# scale the data
+seu_intg <- ScaleData(seu_intg, verbose = FALSE)
+
+# run PCA
+seu_intg <- RunPCA(seu_intg, npcs = 40, verbose = FALSE)
+```
+
+```{r}
+# elbow plot
+ElbowPlot(seu_intg, ndims = 40)
+```
+
+```{r}
+seu_intg <- RunPCA(seu_intg, npcs = 30, verbose = FALSE)
+```
+
+```{r}
+# find neighbors and clusters and run UMAP
+seu_intg <- FindNeighbors(seu_intg, reduction = "pca", dims = 1:30) %>% 
+    FindClusters(resolution = 0.5) %>% # current active identity is set to "seurat_clusters" here
+    RunUMAP(reduction = "pca", dims = 1:30)
+```
+
+```{r}
+# numbers 0-24 represent the clusters and each number underneath is the number of cells grouped into that cluster
+table(seu_intg$seurat_clusters)
+```
+
+Visualization
+```{r}
+Idents(seu_intg) <- "seurat_clusters"
+```
+
+```{r}
+DimPlot(seu_intg, reduction = "umap", label = TRUE)
+```
+```{r}
+DimPlot(seu_intg, reduction = "umap", group.by = "method", shuffle = TRUE)
+```
+
+```{r}
+DimPlot(seu_intg, reduction = "umap", group.by = "subclass_label", 
+        split.by = "method", label=TRUE)
+```
+    
+```{r}
+# change the labels to uppercase so that the naming convention between the two datasets is consistent
+seu_intg@meta.data$subclass_label <- toupper(seu_intg@meta.data$subclass_label)
+```
+
+```{r}
+DimPlot(seu_intg, reduction = "umap", group.by = "subclass_label", 
+        split.by = "method", label=TRUE)
+```
+
+```{r}
+DimPlot(seu_intg, reduction = "umap", group.by = "subclass_label", 
+        cells.highlight = list(VIP = seu_intg@meta.data %>% 
+                                filter(subclass_label == "VIP") %>% 
+                                base::row.names(.),
+                               SST = seu_intg@meta.data %>% 
+                                filter(subclass_label == "SST") %>% 
+                                base::row.names(.)),
+        cols.highlight = c("slateblue", "cadetblue"))
+```
+
+```{r}
+# save the integrated dataset as seurat object
+# saveRDS(seu_intg, file = "seu_intg.rds")
+```
+
+```{r}
+FeaturePlot(seu_intg, features = c("VIP", "PVALB", "SST"), split.by = "method")
+```
+
+Find Conserved Markers
+```{r}
+DefaultAssay(seu_intg) <- "SCT"
+```
+
+= optional: parallel processing =
+```{r}
+install.packages("future")
+library(future)
+
+availableCores()
+```
+
+```{r}
+plan("multisession", workers = 6) # changes from sequential to parallel processing
+```
+
+```{r}
+Idents(seu_intg) <- "seurat_clusters"
+```
+
+```{r}
+# chandelier cells are consistently marked by these genes across the two datasets
+cluster_21_markers <- FindConservedMarkers(seu_intg, ident.1 = 21, grouping.var = "method", logfc.threshold = log(2), minpct = 0.25)
+```
+
+```{r}
+# cluster_21_markers 
+# dim(cluster_21_markers)
+```
+
+```{r}
+# back to sequential processing bc we are done with FindConservedMarkers()
+plan("sequential")
+```
+
+```{r}
+DefaultAssay(seu_intg) <- "integrated"
+```
+
+```{r}
+seu_intg$cluster_method <- paste(seu_intg$seurat_clusters, seu_intg$method, sep = "_")
+```
+
+```{r}
+table(seu_intg$cluster_method)
+```
+
+```{r}
+Idents(seu_intg) <- "cluster_method"
+```
+
+```{r}
+# looking at differential expression between the two datasets // cluster 21: chandelier cells
+cluster_21_method_de <- FindMarkers(seu_intg, ident.1 = "21_10x", ident.2 = "21_smart", logfc.threshold = log(2), min.pct = 0.25)
+```
+
+```{r}
+# cluster_21_method_de
+```
+```{r}
+# looking at differential expression between the two datasets // cluster 10: PVALB cells
+cluster_10_method_de <- FindMarkers(seu_intg, ident.1 = "10_10x", ident.2 = "10_smart", logfc.threshold = log(2), min.pct = 0.25)
+```
+```{r}
+# cluster_10_method_de
+```
+
+```{r}
+cluster_10_top_de <- cluster_10_method_de %>% 
+    # arrange(avg_log2FC) %>%
+    head(3) %>% 
+    row.names(.) 
+
+cluster_10_method_de %>% 
+    arrange(desc(avg_log2FC)) %>%
+    head(3) %>% 
+    row.names(.) 
+```
+```{r}
+FeaturePlot(seu_intg, features = c("PCDH", "CA8", "FRMPD4", "ITGAX", "THSD4", "ICAM1"), 
+            split.by = "method")
+```
+
+```{r}
+Idents(seu_intg) <- "seurat_clusters"
+```
+
+Comparing DotPlot() when using different assays
+```{r}
+DefaultAssay(seu_intg) <- "SCT"
+p_sct <- DotPlot(seu_intg, features = cluster_10_top_de, idents = 10, group.by = "method") + RotatedAxis()
+DefaultAssay(seu_intg) <- "RNA"
+p_rna <- DotPlot(seu_intg, features = cluster_10_top_de, idents = 10, group.by = "method") + RotatedAxis()
+DefaultAssay(seu_intg) <- "integrated"
+p_intg <- DotPlot(seu_intg, features = cluster_10_top_de, idents = 10, group.by = "method") + RotatedAxis()
+```
+
+```{r}
+p_sct + p_rna + p_intg
+```
+
+Automating Cell Type Identification
+TransferData
+Project the PCA structure of reference dataset on to query dataset
+```{r}
+seu_smart <- readRDS("/Users/selenbayram/triplab/KCNI_Summer_2023/seu_smart_2.rds")
+seu_10x <- readRDS("/Users/selenbayram/triplab/KCNI_Summer_2023/seu_10x_2.rds")
+```
+
+```{r}
+seu_10x@meta.data$subclass_label <- toupper(seu_10x@meta.data$subclass_label)
+seu_smart@meta.data$subclass_label <- toupper(seu_smart@meta.data$subclass_label)
+```
+```{r}
+anchors <- FindTransferAnchors(reference = seu_10x, query = seu_smart, reference.reduction = "pca", dims = 1:30)
+```
+
+```{r}
+predictions <- TransferData(anchorset = anchors, refdata = seu_10x$subclass_label, dims = 1:30)
+```
+
+```{r}
+smart_query <- seu_smart %>% 
+    AddMetaData(metadata = predictions)
+```
+
+```{r}
+# add a new column with values T or F depending on whether the predicted label matches the true label
+smart_query$prediction_match <- smart_query$subclass_label == smart_query$predicted.id
+```
+
+```{r}
+table(smart_query$prediction_match)
+table(smart_query$predicted.id)
+
+# for the cekl types that only exit in reference dataset (10x) we expect all False by default
+table(smart_query$predicted.id, smart_query$prediction_match)
+```
+
+
+MapQuery
+projecting the query dataset onto the UMAP structure of the reference
+```{r}
+anchors <- FindTransferAnchors(reference = seu_10x, query = seu_smart, reference.reduction = "pca", dims = 1:30)
+```
+
+```{r}
+seu_10x <- RunUMAP(seu_10x, return.model = TRUE, dims = 1:30)
+seu_smart <- RunUMAP(seu_smart, return.model = TRUE, dims = 1:30)
+```
+
+```{r}
+smart_query_2 <- MapQuery(anchorset = anchors, reference = seu_10x, query = seu_smart, refdata = list(subclass_label = "subclass_label"), reference.reduction = "pca", reduction.model = "umap")
+```
+
+```{r}
+p3 <- DimPlot(smart_query_2, reduction = "ref.umap", group.by = "predicted.subclass_label", 
+                label = TRUE, label.size = 3, repel = TRUE) + NoLegend() + 
+                ggtitle("Query transferred labels")
+p4 <- DimPlot(seu_10x, reduction = "umap", group.by = "subclass_label", 
+                label = TRUE, label.size = 3, repel = TRUE) + NoLegend() + 
+                ggtitle("Reference annotations")
+```
+
+```{r}
+p3 + p4
+```
+
+```{r}
+smart_query_2$predicted.subclass_label.score
+VlnPlot(smart_query_2, group.by = "predicted.subclass_label", features = "predicted.subclass_label.score") + NoLegend()
+```
+
+```{r}
+# Generate the numbers from 1 to 10
+x <- 1:10
+
+# Create a plot with x as the x-axis and x as the y-axis
+plot(x, x, type = "l", lwd = 2, xlab = "Number", ylab = "Number", main = "Plot of Numbers 1-10")
+
+```
