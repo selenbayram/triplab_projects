@@ -24,6 +24,7 @@ Gouwens patch-seq dataset with both electrophysiology and gene expression
 2- Perform clustering and UMAP analysis on Gouwens patch-seq dataset <br />
 
 #### Useful Papers and Links
+Seurat scRNA-seq integration : https://satijalab.org/seurat/articles/integration_introduction.html#performing-integration-on-datasets-normalized-with-sctransform <br />
 Seurat Bridge Integration: https://satijalab.org/seurat/articles/seurat5_integration_bridge.html <br />
 Gala et al. 2021 : https://www.nature.com/articles/s43588-021-00030-1 <br />
 Gouwens et al. 2020 : https://www.cell.com/cell/pdf/S0092-8674(20)31254-X.pdf <br />
