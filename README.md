@@ -15,7 +15,7 @@ Gouwens et al. 2020 patch-seq dataset with both electrophysiology and gene expre
 
 #### Research Questions
 1- Can we infer cell type identity (t-type) for cells for which only the electrophysiology data is available? <br />
-2- Can we infer electrophysiological properties for cells using the gene expression data? <br />
+2- Can we infer electrophysiological properties for cells using the associated gene expression data? <br />
 3- Can we infer gene expression based on electrophysiology data on cells? <br />
 
 #### Initial Steps
