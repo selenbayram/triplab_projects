@@ -1,0 +1,223 @@
+---
+title: "Mouse Smart-seq"
+author: "Selen Bayram"
+date: "2023-07-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading packages
+```{r}
+#install.packages("tidyverse")
+library(tidyverse)
+
+#install.packages("Seurat")
+library(Seurat)
+```
+
+```{r}
+# loading the metadata and count matrix
+mouse_meta = read.csv("AIBS_mouse_meta_mini.csv", row.names = 1)
+mouse_counts = read.csv("AIBS_mouse_counts_mini.csv", row.names = 1)
+```
+
+```{r}
+# changing the row names with the sample names to match counts and metadata in the Seurat object
+row.names(mouse_meta) = mouse_meta$sample_name
+```
+
+creating the Seurat object
+```{r}
+seu_mouse = CreateSeuratObject(counts = t(mouse_counts), meta.data = mouse_meta)
+```
+
+```{r}
+rm(mouse_counts, mouse_meta)
+```
+
+```{r}
+Idents(seu_mouse)
+seu_mouse@active.ident
+```
+normalization
+```{r}
+seu_mouse = seu_mouse %>% NormalizeData(normalization.method = "LogNormalize", scale.factor = 1000000)
+```
+```{r}
+# looking at the normalized data
+seu_mouse@assays$RNA@data 
+```
+finding the variable features (genes)
+```{r}
+# using variance-stabilizing transformation (VST) method
+# importance: genes that show high variablity across cells -> helps w/ clustering in the later stages
+# with nfeatures = 2000 / decrease to avoid noise or uninformative genes; increase to include informative genes
+seu_mouse = seu_mouse %>% FindVariableFeatures(selection.method = "vst", nfeatures = 2000) 
+
+#look at most variable features
+seu_mouse@assays$RNA@var.features 
+```
+scaling the data
+```{r}
+# from Mel's tutorial: 
+# """
+# ScaleData() scales the gene expression values of the selected variable features in the Seurat object. 
+# It standardizes the expression values to have zero mean and unit variance. 
+# """
+seu_mouse = seu_mouse %>% ScaleData(verbose = FALSE)
+```
+
+RUNNING ORINCIPAL COMPONENT ANALYSIS (PCA)
+
+from Mel's tutorial:
+"""
+PCA reduces the dimensionality of the data by identifying linear combinations of genes (principal components) that capture the most significant sources of variation. The choice of npcs depends on the complexity and heterogeneity of the dataset. Exploratory analyses like an Elbow Plot can help in determining an appropriate number of principal components to retain.
+"""
+```{r}
+# npcs = the number of principal components to compute 
+# npcs = 50 is the default - change if necessary based on elbow plot
+seu_mouse = seu_mouse %>% 
+  RunPCA(npcs = 50, verbose = FALSE)
+```
+
+```{r}
+# elbow plot
+seu_mouse %>% 
+  ElbowPlot(ndims=50)
+```
+FINDING NEIGHBORS
+
+from Mel's tutorial:
+"""
+FindNeighbors() identifies cell neighbors based on the PCA-reduced data in <seu_mouse>. 
+The dims parameter specifies the subset of principal components to use for neighbor finding 
+(in this case, components 1 to 20).
+"""
+```{r}
+seu_mouse = seu_mouse %>% 
+  FindNeighbors(reduction = "pca", dims = 1:20)
+```
+
+FINDING CLUSTERS 
+
+from Mel's tutorial:
+"""
+FindClusters() performs clustering analysis on the identified cell neighbors in <seu_mouse>.
+The resolution parameter determines the granularity of the clustering (in this case, 0.5).
+Clustering groups similar cells together based on their gene expression profiles. 
+The choice of resolution affects the number and size of the resulting clusters.
+"""
+```{r}
+seu_mouse = seu_mouse %>%
+  FindClusters(resolution = 0.5) 
+# nm.method and annoy.metric have drastic effects on cluster creation
+
+table(seu_mouse$seurat_clusters) # number of cells in each cluster
+table(seu_mouse$seurat_clusters, seu_mouse$class_label) # number of cells per class per cluster
+table(seu_mouse$seurat_clusters, seu_mouse$subclass_label) # number of cells per subclass per cluster
+```
+RUNNING UMAP
+
+From Mel's tutorial:
+"""
+RunUMAP() computes the Uniform Manifold Approximation and Projection (UMAP) embedding on the PCA-reduced data in <seu_mouse>. 
+UMAP is a dimensionality reduction technique that helps visualize the high-dimensional data in a lower-dimensional space. The reduction parameter specifies the reduction method used for UMAP (in this case, "pca"), and the dims parameter specifies the subset of principal components to use for the UMAP computation (in this case, components 1 to 20).
+
+Considerations for choosing the best values for these parameters involve understanding the dataset, the biological question of interest, and exploring the impact of parameter choices on the analysis results. It may require iterative experimentation and evaluation to optimize the parameter values for specific analysis goals, such as identifying relevant features, capturing variation, defining clusters, and obtaining informative visualizations.
+"""
+
+```{r}
+seu_mouse = seu_mouse %>%
+  RunUMAP(reduction = "pca", dims = 1:20)
+
+# visualizing clusters
+DimPlot(seu_mouse, reduction = "umap", group.by = "subclass_label", label=TRUE)
+DimPlot(seu_mouse, reduction = "umap", group.by = "seurat_clusters", label=TRUE, repel=TRUE)
+```
+from Mel's tutorial:
+"""
+DimPlot() creates a visualization of the cells in a two-dimensional space based on the UMAP reduction. Each cell is represented as a point, and the points are colored according to their assigned subclass label or cluster.
+
+This type of plot can be useful to:
+* Visualize the distribution and spatial arrangement of different cell types or clusters in the dataset.
+* Identify clusters or groupings of cells that share similar characteristics.
+* Assess the separation or overlap of cell types/clusters in the UMAP space.
+* Investigate potential relationships or transitions between cell types.
+"""
+
+DIFFERENTIAL EXPRESSION ANALYSIS 
+FINDING CLUSTER MARKER GENES
+
+from Mel's tutorial:
+"""
+FindMarkers() identifies genes that are differentially expressed between one cluster and all other clusters. The parameters ident.1, logfc.threshold, and min.pct specify the cluster to compare against, the minimum log-fold change threshold, and the minimum percentage of cells expressing the gene, respectively. This step helps identify genes that can potentially distinguish one cluster from other clusters, and can be used for cell type annotation.
+
+FindAllMarkers() will perform the above for all clusters at once.
+"""
+
+```{r}
+Idents(seu_mouse) = "seurat_clusters"
+
+all_clusters = seu_mouse %>%
+  FindAllMarkers(logfc.threshold = log(2), min.pct = 0.50)
+```
+
+```{r}
+# genes to distinguish cluster 14 from all other clusters
+cluster_14_v_all <- seu_mouse %>%
+  FindMarkers(ident.1 = 14, logfc.threshold = log(2), min.pct = 0.50)
+
+cluster_14_v_all %>% 
+  arrange(p_val_adj)
+```
+
+VISUALIZATIONS
+
+```{r}
+features <- cluster_14_v_all %>% 
+  arrange(p_val_adj) %>% 
+  head(n=6) %>% 
+  row.names()
+
+Idents(seu_mouse) <- "seurat_clusters" 
+#setting our active identity back to our clusters
+```
+
+1- Violin Plot
+from Mel's tutorial:
+"""
+VlnPlot() generates a violin plot to visualize the expression distribution of the selected marker genes (features) across different clusters. This plot provides insights into the expression patterns and variations of these genes within each cluster, including the specific expression levels and the presence of bimodal or skewed distributions.
+"""
+```{r}
+seu_mouse %>% VlnPlot(features = features)
+```
+
+2- Feature Plot
+from Mel's tutorial:
+"""
+FeaturePlot() creates a feature plot to visualize the expression of the selected marker genes (features) in a scatterplot-like format. This plot displays the expression levels of the genes on the x-axis and the fraction of cells expressing the genes on the y-axis, with each dot representing a cell. It helps visualize the cell-to-cell variation in gene expression and identify potential correlations or differences between clusters.
+"""
+```{r}
+seu_mouse %>% FeaturePlot(features = features)
+```
+
+3- Dot Plot
+from Mel's tutorial:
+"""
+DotPlot() generates a dot plot to visualize the expression of the selected marker genes (features) in a matrix-like format. Each row represents a gene, each column represents a cluster, and the size/color of the dots indicates the gene expression level. This plot helps identify genes that are specifically expressed or enriched in cluster 8 compared to other clusters.
+"""
+```{r}
+seu_mouse %>% DotPlot(features = features) + RotatedAxis()
+```
+4- Heat Map
+from Mel's tutorial:
+"""
+DoHeatmap() creates a heat map to visualize the expression patterns of the selected marker genes (features) across cells. The heat map represents the gene expression values as a color-coded matrix, with rows corresponding to genes and columns corresponding to cells. It provides a comprehensive view of gene expression similarities and differences across cells and clusters.
+"""
+```{r}
+DoHeatmap(subset(seu_mouse, downsample = 100), features = features, size = 3, slot="data") +
+  scale_fill_viridis_c()
+```
