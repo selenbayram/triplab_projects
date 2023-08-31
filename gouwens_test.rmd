@@ -1,0 +1,139 @@
+---
+title: "gouwens mouse patch-seq analysis"
+author: "Selen Bayram"
+date: "2023-07-13"
+output: rmarkdown::html_vignette
+---
+
+```{r setup, include = FALSE}
+knitr::opts_knit$set(root.dir = "/nethome/kcni/sbayram/gouwens_test/")
+```
+
+## Setup
+# Load packages
+```{r}
+#install.packages("tidyverse")
+library(tidyverse)
+#install.packages("Seurat")
+library(Seurat)
+#install.packages("janitor")
+library(janitor)
+library(stringr)
+```
+
+## Load metadata and count matrix
+```{r}
+mouse_count_matrix <- read.csv("/external/rprshnas01/netdata_kcni/stlab/Public/AIBS_patchseq_2020/mouse/transcriptomics/20200513_Mouse_PatchSeq_Release_count.csv", row.names = 1)
+
+# column 19 include the transcriptomics labels so we set the row names in metadata to match the count matrix
+mouse_meta_data <- read.csv("/external/rprshnas01/netdata_kcni/stlab/Public/AIBS_patchseq_2020/mouse/20200711_patchseq_metadata_mouse.csv", row.names = 19)
+```
+
+## Clean up metadata
+```{r}
+# replace the white space in the column names with underscore
+# case = "snake" will convert the column names to snake case (e.g. "T-type" to "t_type")
+mouse_meta_data <- mouse_meta_data %>% clean_names(case = "snake")
+mouse_count_matrix <- mouse_count_matrix %>% clean_names(case = "snake")
+
+# convert the row names to snake case
+# unfortunately, there was no function that i could find so i had to do the following:
+mouse_meta_data <- mouse_meta_data %>% 
+    rownames_to_column("cell_id") %>% 
+    mutate(cell_id = str_to_lower(cell_id)) %>% 
+    mutate(cell_id = str_replace_all(cell_id, "-", "_")) %>%
+    column_to_rownames("cell_id")
+```
+
+
+## Add a column to the metadata to indicate the cell subclass_label
+```{r}
+# create a new column called "subclass_label" in the metadata
+## mouse_meta_data <- mouse_meta_data %>% mutate(subclass_label = word(mouse_meta_data$x, 1))
+# change the empty cells to NA
+## mouse_meta_data["subclass_label"][mouse_meta_data["subclass_label"] == ""] <- "NA"
+
+# rename the column "x" to "subclass_label"
+mouse_meta_data <- mouse_meta_data %>%
+    rename("subclass_label" = "x")
+
+# extract the first word from the subclass_label column
+mouse_meta_data <- mouse_meta_data %>%
+    mutate(subclass_label = word(subclass_label, 1))
+
+# change the empty cells to NA
+mouse_meta_data["subclass_label"][mouse_meta_data["subclass_label"] == ""] <- "NA"
+
+# remove the rows with NA in subclass_label
+mouse_meta_data <- mouse_meta_data %>%
+    filter(subclass_label != "NA")
+```
+
+## Create Seurat object
+```{r}
+seu_mouse <- CreateSeuratObject(counts = mouse_count_matrix, meta.data = mouse_meta_data)
+Idents(seu_mouse)
+```
+
+## Processing
+# Normalization
+```{r}
+# scale.factor = 1000000 so that we get counts per million (CPM)
+seu_mouse <- NormalizeData(seu_mouse, normalization.method = "LogNormalize", scale.factor = 1000000)
+```
+
+# Find variable features-genes-
+```{r}
+seu_mouse <- FindVariableFeatures(seu_mouse, selection.method = "vst", nfeatures = 2000)
+```
+
+# Scale data
+```{r}
+seu_mouse <- ScaleData(seu_mouse)
+```
+
+# Run PCA
+```{r}
+seu_mouse <- RunPCA(seu_mouse, npcs = 50)
+```
+
+# Use ElbowPlot to determine the number of PCs to use in clustering
+```{r}
+ElbowPlot(seu_mouse, ndims = 50)
+```
+
+# Run PCA again with the number of PCs determined by ElbowPlot
+```{r}
+# we could use 13-20 PCs
+seu_mouse <- RunPCA(seu_mouse, npcs = 20)
+```
+
+# Find neighbors
+```{r}  
+seu_mouse <- FindNeighbors(seu_mouse, reduction = "pca", dims = 1:20)
+```
+
+# Find clusters
+```{r}
+seu_mouse <- FindClusters(seu_mouse, resolution = 0.5)
+```
+
+# Show the number of cells in each cluster
+```{r}
+table(seu_mouse$seurat_clusters)
+table(seu_mouse$seurat_clusters, seu_mouse$subclass_label)
+```
+
+# Run UMAP
+```{r}
+seu_mouse <- RunUMAP(seu_mouse, reduction = "pca", dims = 1:20)
+```
+
+## Visualizations
+# DimPlot
+```{r}
+seurat_umap <- DimPlot(seu_mouse, reduction = "umap", group.by = "seurat_clusters", label = TRUE, repel = TRUE)
+# seurat_pca <- DimPlot(seu_mouse, reduction = "pca", group.by = "seurat_clusters", label = TRUE, repel = TRUE)
+subclass_umap <- DimPlot(seu_mouse, reduction = "umap", group.by = "subclass_label", label = TRUE, repel = TRUE)
+seurat_umap + subclass_umap
+```
