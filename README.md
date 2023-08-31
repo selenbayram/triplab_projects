@@ -11,7 +11,7 @@ Cross-modal data integration using smart-seq and patch-seq datasets with Seurat'
 #### Datasets
 Allen Institute smart-seq dataset with gene expression <br />
 Allen Institute older datasets with electrophsiology data <br />
-Gouwens patch-seq dataset with both electrophysiology and gene expression
+Gouwens et al. 2020 patch-seq dataset with both electrophysiology and gene expression
 
 #### Research Questions
 1- Can we infer cell type identity (t-type) for cells for which only the electrophysiology data is available? <br />
