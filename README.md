@@ -18,8 +18,8 @@ Gouwens patch-seq dataset with both electrophysiology and gene expression
 2- Can we infer electrophysiological properties for cells using the gene expression data? <br />
 3- Can we infer gene expression based on electrophysiology data on cells? <br />
 
-#### Initial Steps for Onboarding
-0- Set up VSCode and remote access to SCC; get correct versions of R and Seurat <br />
+#### Initial Steps
+0- Set up VSCode and remote access to SCC; get correct versions of R and Seurat; learn R <br />
 1- Perform clustering and UMAP analysis on mouse smart-seq dataset used for 2022 KCNI Summer School <br />
 2- Perform clustering and UMAP analysis on Gouwens patch-seq dataset <br />
 
